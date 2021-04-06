@@ -89,4 +89,4 @@ def dice_loss(y_true, y_pred):
     return 1.0 - dice_coef(y_true, y_pred)
 
 if __name__ == '__main__':
-    model = seg_model((1024, 1024, 3)) 
+    model = seg_model((512, 512, 3)) 

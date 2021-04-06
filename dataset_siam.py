@@ -213,7 +213,7 @@ def load_datasets(csv_path, batch_size=8, val_size=256, buffer_size=100):
     return dataset_train, dataset_val
 
 if __name__ == '__main__':
-    train_ds, val_ds = load_datasets('/app/spacenet7/csvs/sn7_baseline_train_df.csv')
+    train_ds, val_ds = load_datasets('/app/spacenet7/csvs/sn7_baseline_train_direct_class.csv')
 
     predictions_dir = './training_samples'
     def save_img(img, name):
