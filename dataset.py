@@ -6,7 +6,6 @@ import datetime
 import os
 from tensorflow.keras.layers import *
 from tensorflow.keras.optimizers import Adam
-import tensorflow_io as tfio
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 print(f"Tensorflow ver. {tf.__version__}")
@@ -36,12 +35,12 @@ def parse_image_pair(csv_batch) -> dict:
     """
     img1_path = csv_batch['image1'][0]
     image1 = tf.io.read_file(img1_path)
-    image1 = tfio.experimental.image.decode_tiff(image1)
+    image1 = tf.image.decode_png(image1)
     image1 = tf.image.convert_image_dtype(image1, tf.float32)[:, :, :3]
 
     img2_path = csv_batch['image2'][0]
     image2 = tf.io.read_file(img2_path)
-    image2 = tfio.experimental.image.decode_tiff(image2)
+    image2 = tf.image.decode_png(image2)
     image2 = tf.image.convert_image_dtype(image2, tf.float32)[:, :, :3]
 
     #cm_name = tf.strings.regex_replace(mask_path, r'20\d{2}_\d{2}', double_date)
@@ -51,7 +50,7 @@ def parse_image_pair(csv_batch) -> dict:
 
     mask = tf.io.read_file(cm_name)
     # The masks contain a class index for each pixels
-    mask = tfio.experimental.image.decode_tiff(mask)
+    mask = tf.image.decode_png(mask)
     mask = tf.image.convert_image_dtype(mask, tf.float32)[:, :, :1]
     #mask = tf.where(mask == 255, np.dtype('uint8').type(1), mask)
     #filler_row = tf.zeros((1, 1024, 1), tf.uint8)
