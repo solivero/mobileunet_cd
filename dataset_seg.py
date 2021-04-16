@@ -10,13 +10,13 @@ from tensorflow.keras.optimizers import Adam
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 print(f"Tensorflow ver. {tf.__version__}")
 
-root = "/app"
-dataset_path = os.path.join(root, "spacenet7")
+dataset_path = "/media/unibap_storage3/projects/change_detection"
+#dataset_path = os.path.join(root, "spacenet7")
 training_data = "train/"
 val_data = "train/"
 IMG_SIZE = 1024 # Image size expected on file
 UPSCALE = 2 # To avoid tiny areas of 2x2 pixels
-PATCH_SIZE = 256 # Becuase pretrained weights 224. After upscaling
+PATCH_SIZE = 512 # Becuase pretrained weights 224. After upscaling
 SEED = 42
 
 def parse_image(csv_batch) -> dict:
@@ -35,7 +35,7 @@ def parse_image(csv_batch) -> dict:
     """
     img1_path = csv_batch['image'][0]
     image1 = tf.io.read_file(img1_path)
-    image1 = tf.image.decode_png(image1)
+    image1 = tf.image.decode_png(image1, channels=3)
     image1 = tf.image.convert_image_dtype(image1, tf.float32)[:, :, :3]
 
     #cm_name = tf.strings.regex_replace(mask_path, r'20\d{2}_\d{2}', double_date)
@@ -45,7 +45,7 @@ def parse_image(csv_batch) -> dict:
 
     mask = tf.io.read_file(cm_name)
     # The masks contain a class index for each pixels
-    mask = tf.image.decode_png(mask)
+    mask = tf.image.decode_png(mask, channels=1)
     mask = tf.image.convert_image_dtype(mask, tf.float32)[:, :, :1]
     #mask = tf.where(mask == 255, np.dtype('uint8').type(1), mask)
     #filler_row = tf.zeros((1, 1024, 1), tf.uint8)
@@ -107,13 +107,13 @@ def normalize(input_image1: tf.Tensor, input_image2: tf.Tensor, input_mask: tf.T
 @tf.function
 def upscale_images(image: tf.Tensor, mask: tf.Tensor) -> tuple:
     upscaled_size = IMG_SIZE*UPSCALE
-    # use nearest neightbor?
-    input_image = tf.image.resize(image, (upscaled_size, upscaled_size))
-    input_mask = tf.image.resize(mask, (upscaled_size, upscaled_size))
+    upscaled_shape = (upscaled_size, upscaled_size)
+    input_image = tf.image.resize(image, upscaled_shape, method='nearest')
+    input_mask = tf.image.resize(mask, upscaled_shape, method='nearest')
     return input_image, input_mask
 
 @tf.function
-def load_image_train(image: tf.Tensor, mask: tf.Tensor) -> tuple:
+def augment_rnd(image: tf.Tensor, mask: tf.Tensor) -> tuple:
     """Apply some transformations to an input dictionary
     containing a train image and its annotation.
 
@@ -134,11 +134,18 @@ def load_image_train(image: tf.Tensor, mask: tf.Tensor) -> tuple:
         A modified image and its annotation.
     """
 
-    if tf.random.uniform(()) > 1:
-        image1 = tf.image.flip_left_right(image)
+    if tf.random.uniform(()) > 0.5:
+        image = tf.image.flip_left_right(image)
         #image2 = tf.image.flip_left_right(image2)
         mask = tf.image.flip_left_right(mask)
-
+    if tf.random.uniform(()) > 0.5:
+        image = tf.image.flip_up_down(image)
+        #image2 = tf.image.flip_up_down(image2)
+        mask = tf.image.flip_up_down(mask)
+    if tf.random.uniform(()) > 0.5:
+        image = tf.image.rot90(image)
+        #image2 = tf.image.rot90(image2)
+        mask = tf.image.rot90(mask)
     #input_image1, input_image2, input_mask = normalize(image1, image2, mask)
 
     return image, mask
@@ -171,12 +178,17 @@ def load_image_test(datapoint: dict) -> tuple:
 
 BUFFER_SIZE = 100
 
-def load_image_dataset(csv_dataset):
-    return csv_dataset \
+def make_patches_ds(image, mask):
+    return tf.data.Dataset.from_tensor_slices(make_patches(image, mask))
+
+def load_image_dataset(csv_dataset, augment):
+    dataset = csv_dataset \
         .map(parse_image) \
-        .map(upscale_images) \
-        .flat_map(lambda image, mask: tf.data.Dataset.from_tensor_slices(make_patches(image, mask))) \
-        .map(load_image_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+        .map(upscale_images, num_parallel_calls=AUTOTUNE) \
+        .flat_map(make_patches_ds)
+    if augment:
+        dataset = dataset.map(augment_rnd)
+    return dataset
 
 def load_csv_dataset(csv_path):
     return tf.data.experimental.make_csv_dataset(
@@ -184,23 +196,18 @@ def load_csv_dataset(csv_path):
         batch_size=1, # Actual batching in later stages
         num_epochs=1,
         ignore_errors=True)
-        # Shuffle train_csv_ds first to have diverse val set?
 
-def load_datasets(csv_path, batch_size=8, val_size=256, buffer_size=100):
+def load_dataset(csv_path, batch_size=8, shuffle=True, buffer_size=100, augment=True):
     csv_dataset = load_csv_dataset(csv_path)
-    train_csv = csv_dataset.skip(val_size)
-    dataset_train = load_image_dataset(train_csv) \
-        .batch(batch_size, drop_remainder=True) \
-        .prefetch(buffer_size=AUTOTUNE)
+    dataset = load_image_dataset(csv_dataset, augment) \
+        .batch(batch_size, drop_remainder=True)
         #.shuffle(buffer_size=buffer_size, seed=SEED) \
-    val_csv = csv_dataset.take(val_size)
-    dataset_val = load_image_dataset(val_csv) \
-        .batch(batch_size, drop_remainder=True) \
-        .prefetch(buffer_size=AUTOTUNE)
-    return dataset_train, dataset_val
+    if shuffle:
+        dataset = dataset.shuffle(buffer_size=buffer_size, seed=SEED)
+    return dataset.prefetch(buffer_size=AUTOTUNE)
 
 if __name__ == '__main__':
-    train_ds, val_ds = load_datasets('/app/spacenet7/csvs/sn7_baseline_train_post_class.csv')
+    train_ds = load_dataset('/app/spacenet7/csvs/sn7_baseline_train_post_class.csv')
 
     predictions_dir = './training_samples'
     def save_img(img, name):
